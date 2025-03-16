@@ -9,7 +9,7 @@
 ### Installation
 1. Clone the repository:
    ```sh
-   git clone <repo_url>
+   git clone https://github.com/harshapeshave641/Demand-Forecasting-Backend.git
    cd <project_directory>
    ```
 2. Install dependencies:
