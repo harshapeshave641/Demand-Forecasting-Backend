@@ -10,7 +10,7 @@
 1. Clone the repository:
    ```sh
    git clone https://github.com/harshapeshave641/Demand-Forecasting-Backend.git
-   cd <project_directory>
+   cd Demand-Forecasting-Backend
    ```
 2. Install dependencies:
    ```sh
