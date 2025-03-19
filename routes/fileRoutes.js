@@ -2,13 +2,30 @@ const express = require("express");
 const multer = require("multer");
 const { getGridFSBucket,mongoose } = require("../config/db"); // Import from db.js
 const authMiddleware = require("../middleware/authMiddleware"); // Adjust path as needed
+const { mergeUserCSVFiles } = require("../utils/csvUtils"); // Import the function
 
 const router = express.Router();
 const csv = require("csv-parser");
 const stream = require("stream");
-// Multer setup with memory storage
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
+
+
+router.get("/merge", authMiddleware, async (req, res) => {
+  // console.log("hello")
+  const userId = req.user.id;
+  
+  const result = await mergeUserCSVFiles(userId);
+  // console.log(result)
+  if (!result.success) {
+      return res.status(404).json({ message: result.message });
+  }
+
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", 'attachment; filename="merged_data.csv"');
+  res.send(result.csvData);
+});
+
 
 // File upload route
 router.get("/json/:filename", authMiddleware, async (req, res) => {
@@ -78,7 +95,7 @@ router.post("/upload", authMiddleware, upload.single("file"), async (req, res) =
   
       // Extract metadata (You can modify this part based on your specific requirements)
       const quarter = req.file.originalname.split('_')[1]; // Example: Q1
-      const year = req.file.originalname.split('_')[2]; // Example: 2024
+      const year = req.file.originalname.split('_')[2].split('.')[0];
       const userId = req.user.id // Unique file ID for storage
   
       const fileInfo = {
@@ -117,7 +134,7 @@ router.post("/upload", authMiddleware, upload.single("file"), async (req, res) =
     }
   });
 
-// Get file info by filename
+// Get file metadata by filename
 router.get("/:filename", authMiddleware, async (req, res) => {
   try {
     const gridfsBucket = getGridFSBucket();
@@ -134,17 +151,26 @@ router.get("/:filename", authMiddleware, async (req, res) => {
 });
 
 // File download route
-router.get("/download/:filename", authMiddleware, async (req, res) => {
+router.get("/deliver/:filename", authMiddleware, async (req, res) => {
   try {
     const gridfsBucket = getGridFSBucket();
-    const file = await gridfsBucket.find({ filename: req.params.filename }).toArray();
+    
+    // Log available filenames in GridFS
+    const allFiles = await gridfsBucket.find({}).toArray();
+    console.log("Available files:", allFiles.map(f => f.filename));
 
+    const file = await gridfsBucket.find({ filename: req.params.filename }).toArray();
+    
     if (!file || file.length === 0) {
+      console.log(`❌ File not found: ${req.params.filename}`);
       return res.status(404).json({ message: "File not found" });
     }
 
+    console.log(`✅ File found: ${req.params.filename}`);
+
     const downloadStream = gridfsBucket.openDownloadStreamByName(req.params.filename);
-    res.set("Content-Type", file[0].contentType || "application/octet-stream");
+    res.set("Content-Type", "text/csv");
+
     downloadStream.pipe(res);
 
     downloadStream.on("error", (error) => {
@@ -154,6 +180,7 @@ router.get("/download/:filename", authMiddleware, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 
 router.delete("/:filename", authMiddleware, async (req, res) => {
     try {
@@ -174,4 +201,6 @@ router.delete("/:filename", authMiddleware, async (req, res) => {
     }
   });
 
+
+  
 module.exports = router;
