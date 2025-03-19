@@ -1,15 +1,16 @@
 const express = require("express");
 const multer = require("multer");
-const { getGridFSBucket,mongoose } = require("../config/db"); // Import from db.js
-const authMiddleware = require("../middleware/authMiddleware"); // Adjust path as needed
-const { mergeUserCSVFiles } = require("../utils/csvUtils"); // Import the function
-
+const { getGridFSBucket,mongoose } = require("../config/db"); 
+const authMiddleware = require("../middleware/authMiddleware"); 
+const { mergeUserCSVFiles } = require("../utils/csvUtils"); 
+const {getJSONFromGridFS}=require("../utils/csvtoJson")
 const router = express.Router();
 const csv = require("csv-parser");
 const stream = require("stream");
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
-
+const Analytics=require('../schema/Analytics')
+const {performAnalytics}=require("../utils/analytics")
 
 router.get("/merge", authMiddleware, async (req, res) => {
   // console.log("hello")
@@ -29,33 +30,42 @@ router.get("/merge", authMiddleware, async (req, res) => {
 
 // File upload route
 router.get("/json/:filename", authMiddleware, async (req, res) => {
+  try {
+    const jsonData = await getJSONFromGridFS(req.params.filename);
+    res.json(jsonData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/perform/:filename", authMiddleware, async (req, res) => {
+  try {
+    const jsonData = await getJSONFromGridFS(req.params.filename);
+    const analyticsResult = performAnalytics(jsonData);
+    console.log(analyticsResult)
     try {
-      const gridfsBucket = getGridFSBucket();
-      const file = await gridfsBucket.find({ filename: req.params.filename }).toArray();
-  
-      if (!file || file.length === 0) {
-        return res.status(404).json({ message: "File not found" });
-      }
-  
-      const downloadStream = gridfsBucket.openDownloadStreamByName(req.params.filename);
-      const csvData = [];
-  
-      downloadStream
-        .pipe(csv())
-        .on("data", (row) => {
-          csvData.push(row);
-        })
-        .on("end", () => {
-          res.json(csvData);
-        })
-        .on("error", (error) => {
-          res.status(500).json({ error: error.message });
+      for (const key in analyticsResult) {
+        const [year, quarter] = key.split('_'); // Correct order
+        const analyticsDoc = new Analytics({
+          userId:req.user.Id,
+          quarter: parseInt(quarter.replace('Q', '')), // Extracts 3 from 'Q3'
+          year: parseInt(year), // Extracts 2024
+          ...analyticsResult[key]
         });
-  
+        await analyticsDoc.save();
+      }
+      
+      res.json({message:"Success"})
+      console.log("Analytics saved successfully!");
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      console.error("Error saving analytics:", error);
     }
-  });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 
   router.get("/files/meta", authMiddleware, async (req, res) => {
     try {
@@ -78,61 +88,103 @@ router.get("/json/:filename", authMiddleware, async (req, res) => {
     }
   });
 
+  
 router.post("/upload", authMiddleware, upload.single("file"), async (req, res) => {
-    try {
+  try {
       if (!req.file) {
-        return res.status(400).json({ message: "No file uploaded" });
+          return res.status(400).json({ message: "No file uploaded" });
       }
-  
+
       const gridfsBucket = getGridFSBucket();
-  
+
       // Check if file with the same name already exists
       const existingFile = await gridfsBucket.find({ filename: req.file.originalname }).toArray();
-      
       if (existingFile.length > 0) {
-        return res.status(400).json({ message: "File already exists" });
+          return res.status(400).json({ message: "File already exists" });
       }
-  
-      // Extract metadata (You can modify this part based on your specific requirements)
-      const quarter = req.file.originalname.split('_')[1]; // Example: Q1
-      const year = req.file.originalname.split('_')[2].split('.')[0];
-      const userId = req.user.id // Unique file ID for storage
-  
+
+      // Extract metadata from filename (Example: Q1_2024_Q3_2025)
+      const filenameParts = req.file.originalname.split('_');
+      
+      if (filenameParts.length < 4) {
+          return res.status(400).json({ message: "Invalid filename format" });
+      }
+
+      const startQuarter = filenameParts[0]; // Q1
+      const startYear = parseInt(filenameParts[1]); // 2024
+      const endQuarter = filenameParts[2]; // Q3
+      const endYear = parseInt(filenameParts[3].split('.')[0]); // 2025
+      const userId = req.user.id; // User ID
+
+      // Convert quarter names to numeric values for calculation
+      const quarterMapping = { Q1: 1, Q2: 2, Q3: 3, Q4: 4 };
+      const startQuarterNum = quarterMapping[startQuarter];
+      const endQuarterNum = quarterMapping[endQuarter];
+
+      // Calculate number of quarters in range
+      const noOfQuarters = (endYear - startYear) * 4 + (endQuarterNum - startQuarterNum) + 1;
+
       const fileInfo = {
-        filename: req.file.originalname,
-        bucketName: "filesBucket",
-        metadata: {
-          quarter: quarter,  // Quarter name like Q1, Q2, etc.
-          year: year,        // Year of the data (e.g., 2024)
-          userId: userId,    // Unique file ID generated here
-          timestamp: new Date(),
-        },
+          filename: req.file.originalname,
+          bucketName: "filesBucket",
+          metadata: {
+              startQuarter: startQuarter,
+              startYear: startYear,
+              endQuarter: endQuarter,
+              endYear: endYear,
+              noOfQuarters: noOfQuarters,
+              userId: userId,
+              timestamp: new Date(),
+          },
       };
-  
+
       // Upload the file with metadata
       const uploadStream = gridfsBucket.openUploadStream(req.file.originalname, {
-        contentType: req.file.mimetype,
-        metadata: fileInfo.metadata,
+          contentType: req.file.mimetype,
+          metadata: fileInfo.metadata,
       });
-  
+
       uploadStream.end(req.file.buffer);
-  
-      uploadStream.on("finish", () => {
-        res.status(201).json({
-          message: "File uploaded successfully",
-          fileId: uploadStream.id,
-          filename: req.file.originalname,
-          metadata: fileInfo.metadata, // Respond with metadata
-        });
+
+      uploadStream.on("finish", async () => {
+          try {
+              // After file upload is complete, perform analytics
+              const jsonData = await getJSONFromGridFS(req.file.originalname);
+              const analyticsResult = performAnalytics(jsonData);
+              console.log(analyticsResult);
+
+              // Save analytics results to the database
+              for (const key in analyticsResult) {
+                  const [year, quarter] = key.split('_'); // Correct order
+                  const analyticsDoc = new Analytics({
+                      userId: req.user.id, // Use req.user.id instead of req.user.Id
+                      quarter: parseInt(quarter.replace('Q', '')), // Extracts 3 from 'Q3'
+                      year: parseInt(year), // Extracts 2024
+                      ...analyticsResult[key]
+                  });
+                  await analyticsDoc.save();
+              }
+
+              console.log("Analytics saved successfully!");
+              res.status(201).json({
+                  message: "File uploaded and analytics performed successfully",
+                  fileId: uploadStream.id,
+                  filename: req.file.originalname,
+                  metadata: fileInfo.metadata,
+              });
+          } catch (error) {
+              console.error("Error performing analytics or saving results:", error);
+              res.status(500).json({ message: "Error performing analytics", error: error.message });
+          }
       });
-  
+
       uploadStream.on("error", (error) => {
-        res.status(500).json({ message: "Error uploading file", error: error.message });
+          res.status(500).json({ message: "Error uploading file", error: error.message });
       });
-    } catch (error) {
+  } catch (error) {
       res.status(500).json({ message: "Server error", error: error.message });
-    }
-  });
+  }
+});
 
 // Get file metadata by filename
 router.get("/:filename", authMiddleware, async (req, res) => {
@@ -182,7 +234,7 @@ router.get("/deliver/:filename", authMiddleware, async (req, res) => {
 });
 
 
-router.delete("/:filename", authMiddleware, async (req, res) => {
+router.delete("/:filename", async (req, res) => {
     try {
       const gridfsBucket = getGridFSBucket(); // Get GridFSBucket instance
   

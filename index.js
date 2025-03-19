@@ -5,6 +5,7 @@ const cors = require("cors");
 const userRoutes = require("./routes/userRoutes");
 const fileRoutes = require("./routes/fileRoutes");
 const fastApiRoutes=require("./routes/fastApiRoutes")
+const analyticsRoutes=require("./routes/analytics")
 const app = express();
 
 // Middleware
@@ -21,6 +22,7 @@ async function initializeServer() {
     app.use("/user", userRoutes);
     app.use("/file", fileRoutes);
     app.use("/api",fastApiRoutes);
+    app.use('/analytics',analyticsRoutes);
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
