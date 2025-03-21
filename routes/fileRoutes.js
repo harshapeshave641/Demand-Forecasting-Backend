@@ -98,7 +98,11 @@ router.post("/upload", authMiddleware, upload.single("file"), async (req, res) =
       const gridfsBucket = getGridFSBucket();
 
       // Check if file with the same name already exists
-      const existingFile = await gridfsBucket.find({ filename: req.file.originalname }).toArray();
+      const existingFile = await gridfsBucket.find({
+        filename: req.file.originalname,
+        "metadata.userId": req.user.id // Assuming `req.user.id` contains the user's ID
+      }).toArray();
+      
       if (existingFile.length > 0) {
           return res.status(400).json({ message: "File already exists" });
       }

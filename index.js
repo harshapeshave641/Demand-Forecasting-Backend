@@ -6,6 +6,7 @@ const userRoutes = require("./routes/userRoutes");
 const fileRoutes = require("./routes/fileRoutes");
 const fastApiRoutes=require("./routes/fastApiRoutes")
 const analyticsRoutes=require("./routes/analytics")
+const forecastRoutes=require("./routes/forecastRoutes")
 const app = express();
 
 // Middleware
@@ -23,6 +24,7 @@ async function initializeServer() {
     app.use("/file", fileRoutes);
     app.use("/api",fastApiRoutes);
     app.use('/analytics',analyticsRoutes);
+    app.use('/forecast',forecastRoutes)
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
