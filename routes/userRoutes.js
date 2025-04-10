@@ -9,7 +9,7 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET;
 
 
-app.get('/', (req, res) => {
+router.get('/', (req, res) => {
   res.send('Backend is working!');
 });
 
